@@ -129,8 +129,16 @@ class ReverieServer:
 
       self.personas[persona_name] = curr_persona
       self.personas_tile[persona_name] = (p_x, p_y)
-      self.maze.tiles[p_y][p_x]["events"].add(curr_persona.scratch
-                                              .get_curr_event_and_desc())
+      try:
+        if 0 <= p_x < self.maze.width and 0 <= p_y < self.maze.height:
+          self.maze.tiles[p_y][p_x]["events"].add(curr_persona.scratch)
+        else:
+          print(f"Error: Tile coordinates out of bounds: ({p_x}, {p_y})")
+          print(f"Maze dimensions: width={self.maze.width}, height={self.maze.height}")
+      except IndexError as e:
+        print(f"IndexError: {str(e)}")
+        print(f"Tile coordinates: ({p_x}, {p_y})")
+        print(f"Maze dimensions: width={self.maze.width}, height={self.maze.height}")
 
     # REVERIE SETTINGS PARAMETERS:  
     # <server_sleep> denotes the amount of time that our while loop rests each

@@ -209,20 +209,40 @@ def std(list_of_val):
 
 
 def copyanything(src, dst):
-  """
-  Copy over everything in the src folder to dst folder. 
-  ARGS:
-    src: address of the source folder  
-    dst: address of the destination folder  
-  RETURNS: 
-    None
-  """
-  try:
-    shutil.copytree(src, dst)
-  except OSError as exc: # python >2.5
-    if exc.errno in (errno.ENOTDIR, errno.EINVAL):
-      shutil.copy(src, dst)
-    else: raise
+    """
+    Copy a directory tree from src to dst, handling existing directories
+    
+    Args:
+        src: Source directory path
+        dst: Destination directory path
+    """
+    try:
+        # If destination exists, remove it first
+        if os.path.exists(dst):
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            else:
+                os.remove(dst)
+                
+        # Now copy the directory tree
+        shutil.copytree(src, dst)
+        
+    except Exception as e:
+        print(f"Error copying directory: {str(e)}")
+        # If copy fails, ensure destination exists
+        os.makedirs(dst, exist_ok=True)
+        
+        # Try copying files individually
+        for item in os.listdir(src):
+            s = os.path.join(src, item)
+            d = os.path.join(dst, item)
+            try:
+                if os.path.isdir(s):
+                    copyanything(s, d)
+                else:
+                    shutil.copy2(s, d)
+            except Exception as file_error:
+                print(f"Error copying {item}: {str(file_error)}")
 
 
 if __name__ == '__main__':
