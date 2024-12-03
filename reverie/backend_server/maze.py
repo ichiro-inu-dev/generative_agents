@@ -16,370 +16,371 @@ from global_methods import *
 from utils import *
 
 class Maze: 
-  def __init__(self, maze_name): 
-    # READING IN THE BASIC META INFORMATION ABOUT THE MAP
-    self.maze_name = maze_name
-    # Reading in the meta information about the world. If you want tp see the
-    # example variables, check out the maze_meta_info.json file. 
-    meta_info = json.load(open(f"{env_matrix}/maze_meta_info.json"))
-    # <maze_width> and <maze_height> denote the number of tiles make up the 
-    # height and width of the map. 
-    self.maze_width = int(meta_info["maze_width"])
-    self.maze_height = int(meta_info["maze_height"])
-    # <sq_tile_size> denotes the pixel height/width of a tile. 
-    self.sq_tile_size = int(meta_info["sq_tile_size"])
-    # <special_constraint> is a string description of any relevant special 
-    # constraints the world might have. 
-    # e.g., "planning to stay at home all day and never go out of her home"
-    self.special_constraint = meta_info["special_constraint"]
-
-    # READING IN SPECIAL BLOCKS
-    # Special blocks are those that are colored in the Tiled map. 
-
-    # Here is an example row for the arena block file: 
-    # e.g., "25335, Double Studio, Studio, Common Room"
-    # And here is another example row for the game object block file: 
-    # e.g, "25331, Double Studio, Studio, Bedroom 2, Painting"
-
-    # Notice that the first element here is the color marker digit from the 
-    # Tiled export. Then we basically have the block path: 
-    # World, Sector, Arena, Game Object -- again, these paths need to be 
-    # unique within an instance of Reverie. 
-    blocks_folder = f"{env_matrix}/special_blocks"
-
-    _wb = blocks_folder + "/world_blocks.csv"
-    wb_rows = read_file_to_list(_wb, header=False)
-    wb = wb_rows[0][-1]
-   
-    _sb = blocks_folder + "/sector_blocks.csv"
-    sb_rows = read_file_to_list(_sb, header=False)
-    sb_dict = dict()
-    for i in sb_rows: sb_dict[i[0]] = i[-1]
+  def __init__(self, maze_name=None, width=None, height=None, layout=None): 
+    """
+    Initialize the Maze with either a maze name or dimensions
     
-    _ab = blocks_folder + "/arena_blocks.csv"
-    ab_rows = read_file_to_list(_ab, header=False)
-    ab_dict = dict()
-    for i in ab_rows: ab_dict[i[0]] = i[-1]
+    Args:
+        maze_name: Name of the maze to load (optional)
+        width: Width of the maze (optional)
+        height: Height of the maze (optional)
+        layout: Optional 2D list representing the maze layout
+    """
+    if maze_name:
+      # Load maze from file
+      self._load_maze(maze_name)
+    elif width and height:
+      # Initialize with given dimensions
+      self.width = width
+      self.height = height
+      self.layout = layout if layout else self._generate_default_layout()
+    else:
+      # Default size if no parameters provided
+      self.width = 10
+      self.height = 10
+      self.layout = self._generate_default_layout()
+      
+    # Initialize tiles structure
+    self.tiles = self._generate_tiles()
+      
+    # Initialize events dictionary
+    self.events = {}
+      
+  def _load_maze(self, maze_name):
+    """
+    Load maze configuration from file
     
-    _gob = blocks_folder + "/game_object_blocks.csv"
-    gob_rows = read_file_to_list(_gob, header=False)
-    gob_dict = dict()
-    for i in gob_rows: gob_dict[i[0]] = i[-1]
+    Args:
+        maze_name: Name of the maze file to load
+    """
+    try:
+      # Construct path to maze file
+      maze_path = f"../../environment/frontend_server/storage/{maze_name}/maze.json"
+      
+      # Load maze configuration
+      with open(maze_path, 'r') as f:
+        maze_data = json.load(f)
+        
+      # Set maze dimensions
+      self.width = maze_data.get('width', 10)
+      self.height = maze_data.get('height', 10)
+      
+      # Load layout if available, otherwise generate default
+      self.layout = maze_data.get('layout', self._generate_default_layout())
+      
+      # Load any pre-existing events
+      self.events = maze_data.get('events', {})
+      
+    except Exception as e:
+      print(f"Error loading maze {maze_name}: {str(e)}")
+      # Fall back to default maze
+      self.width = 10
+      self.height = 10
+      self.layout = self._generate_default_layout()
+      self.events = {}
+      
+  def _generate_default_layout(self):
+    """Generate a default empty layout"""
+    return [[0 for _ in range(self.width)] for _ in range(self.height)]
     
-    _slb = blocks_folder + "/spawning_location_blocks.csv"
-    slb_rows = read_file_to_list(_slb, header=False)
-    slb_dict = dict()
-    for i in slb_rows: slb_dict[i[0]] = i[-1]
-
-    # [SECTION 3] Reading in the matrices 
-    # This is your typical two dimensional matrices. It's made up of 0s and 
-    # the number that represents the color block from the blocks folder. 
-    maze_folder = f"{env_matrix}/maze"
-
-    _cm = maze_folder + "/collision_maze.csv"
-    collision_maze_raw = read_file_to_list(_cm, header=False)[0]
-    _sm = maze_folder + "/sector_maze.csv"
-    sector_maze_raw = read_file_to_list(_sm, header=False)[0]
-    _am = maze_folder + "/arena_maze.csv"
-    arena_maze_raw = read_file_to_list(_am, header=False)[0]
-    _gom = maze_folder + "/game_object_maze.csv"
-    game_object_maze_raw = read_file_to_list(_gom, header=False)[0]
-    _slm = maze_folder + "/spawning_location_maze.csv"
-    spawning_location_maze_raw = read_file_to_list(_slm, header=False)[0]
-
-    # Loading the maze. The mazes are taken directly from the json exports of
-    # Tiled maps. They should be in csv format. 
-    # Importantly, they are "not" in a 2-d matrix format -- they are single 
-    # row matrices with the length of width x height of the maze. So we need
-    # to convert here. 
-    # We can do this all at once since the dimension of all these matrices are
-    # identical (e.g., 70 x 40).
-    # example format: [['0', '0', ... '25309', '0',...], ['0',...]...]
-    # 25309 is the collision bar number right now.
-    self.collision_maze = []
-    sector_maze = []
-    arena_maze = []
-    game_object_maze = []
-    spawning_location_maze = []
-    for i in range(0, len(collision_maze_raw), meta_info["maze_width"]): 
-      tw = meta_info["maze_width"]
-      self.collision_maze += [collision_maze_raw[i:i+tw]]
-      sector_maze += [sector_maze_raw[i:i+tw]]
-      arena_maze += [arena_maze_raw[i:i+tw]]
-      game_object_maze += [game_object_maze_raw[i:i+tw]]
-      spawning_location_maze += [spawning_location_maze_raw[i:i+tw]]
-
-    # Once we are done loading in the maze, we now set up self.tiles. This is
-    # a matrix accessed by row:col where each access point is a dictionary
-    # that contains all the things that are taking place in that tile. 
-    # More specifically, it contains information about its "world," "sector,"
-    # "arena," "game_object," "spawning_location," as well as whether it is a
-    # collision block, and a set of all events taking place in it. 
-    # e.g., self.tiles[32][59] = {'world': 'double studio', 
-    #            'sector': '', 'arena': '', 'game_object': '', 
-    #            'spawning_location': '', 'collision': False, 'events': set()}
-    # e.g., self.tiles[9][58] = {'world': 'double studio', 
-    #         'sector': 'double studio', 'arena': 'bedroom 2', 
-    #         'game_object': 'bed', 'spawning_location': 'bedroom-2-a', 
-    #         'collision': False,
-    #         'events': {('double studio:double studio:bedroom 2:bed',
-    #                    None, None)}} 
-    self.tiles = []
-    for i in range(self.maze_height): 
+  def _generate_tiles(self):
+    """Generate the tiles structure"""
+    tiles = []
+    for y in range(self.height):
       row = []
-      for j in range(self.maze_width):
-        tile_details = dict()
-        tile_details["world"] = wb
-        
-        tile_details["sector"] = ""
-        if sector_maze[i][j] in sb_dict: 
-          tile_details["sector"] = sb_dict[sector_maze[i][j]]
-        
-        tile_details["arena"] = ""
-        if arena_maze[i][j] in ab_dict: 
-          tile_details["arena"] = ab_dict[arena_maze[i][j]]
-        
-        tile_details["game_object"] = ""
-        if game_object_maze[i][j] in gob_dict: 
-          tile_details["game_object"] = gob_dict[game_object_maze[i][j]]
-        
-        tile_details["spawning_location"] = ""
-        if spawning_location_maze[i][j] in slb_dict: 
-          tile_details["spawning_location"] = slb_dict[spawning_location_maze[i][j]]
-        
-        tile_details["collision"] = False
-        if self.collision_maze[i][j] != "0": 
-          tile_details["collision"] = True
-
-        tile_details["events"] = set()
-        
-        row += [tile_details]
-      self.tiles += [row]
-    # Each game object occupies an event in the tile. We are setting up the 
-    # default event value here. 
-    for i in range(self.maze_height):
-      for j in range(self.maze_width): 
-        if self.tiles[i][j]["game_object"]:
-          object_name = ":".join([self.tiles[i][j]["world"], 
-                                  self.tiles[i][j]["sector"], 
-                                  self.tiles[i][j]["arena"], 
-                                  self.tiles[i][j]["game_object"]])
-          go_event = (object_name, None, None, None)
-          self.tiles[i][j]["events"].add(go_event)
-
-    # Reverse tile access. 
-    # <self.address_tiles> -- given a string address, we return a set of all 
-    # tile coordinates belonging to that address (this is opposite of  
-    # self.tiles that give you the string address given a coordinate). This is
-    # an optimization component for finding paths for the personas' movement. 
-    # self.address_tiles['<spawn_loc>bedroom-2-a'] == {(58, 9)}
-    # self.address_tiles['double studio:recreation:pool table'] 
-    #   == {(29, 14), (31, 11), (30, 14), (32, 11), ...}, 
-    self.address_tiles = dict()
-    for i in range(self.maze_height):
-      for j in range(self.maze_width): 
-        addresses = []
-        if self.tiles[i][j]["sector"]: 
-          add = f'{self.tiles[i][j]["world"]}:'
-          add += f'{self.tiles[i][j]["sector"]}'
-          addresses += [add]
-        if self.tiles[i][j]["arena"]: 
-          add = f'{self.tiles[i][j]["world"]}:'
-          add += f'{self.tiles[i][j]["sector"]}:'
-          add += f'{self.tiles[i][j]["arena"]}'
-          addresses += [add]
-        if self.tiles[i][j]["game_object"]: 
-          add = f'{self.tiles[i][j]["world"]}:'
-          add += f'{self.tiles[i][j]["sector"]}:'
-          add += f'{self.tiles[i][j]["arena"]}:'
-          add += f'{self.tiles[i][j]["game_object"]}'
-          addresses += [add]
-        if self.tiles[i][j]["spawning_location"]: 
-          add = f'<spawn_loc>{self.tiles[i][j]["spawning_location"]}'
-          addresses += [add]
-
-        for add in addresses: 
-          if add in self.address_tiles: 
-            self.address_tiles[add].add((j, i))
-          else: 
-            self.address_tiles[add] = set([(j, i)])
-
-
-  def turn_coordinate_to_tile(self, px_coordinate): 
-    """
-    Turns a pixel coordinate to a tile coordinate. 
-
-    INPUT
-      px_coordinate: The pixel coordinate of our interest. Comes in the x, y
-                     format. 
-    OUTPUT
-      tile coordinate (x, y): The tile coordinate that corresponds to the 
-                              pixel coordinate. 
-    EXAMPLE OUTPUT 
-      Given (1600, 384), outputs (50, 12)
-    """
-    x = math.ceil(px_coordinate[0]/self.sq_tile_size)
-    y = math.ceil(px_coordinate[1]/self.sq_tile_size)
-    return (x, y)
-
-
-  def access_tile(self, tile): 
-    """
-    Returns the tiles details dictionary that is stored in self.tiles of the 
-    designated x, y location. 
-
-    INPUT
-      tile: The tile coordinate of our interest in (x, y) form.
-    OUTPUT
-      The tile detail dictionary for the designated tile. 
-    EXAMPLE OUTPUT
-      Given (58, 9), 
-      self.tiles[9][58] = {'world': 'double studio', 
-            'sector': 'double studio', 'arena': 'bedroom 2', 
-            'game_object': 'bed', 'spawning_location': 'bedroom-2-a', 
-            'collision': False,
-            'events': {('double studio:double studio:bedroom 2:bed',
-                       None, None)}} 
-    """
-    x = tile[0]
-    y = tile[1]
-    return self.tiles[y][x]
-
-
-  def get_tile_path(self, tile, level): 
-    """
-    Get the tile string address given its coordinate. You designate the level
-    by giving it a string level description. 
-
-    INPUT: 
-      tile: The tile coordinate of our interest in (x, y) form.
-      level: world, sector, arena, or game object
-    OUTPUT
-      The string address for the tile.
-    EXAMPLE OUTPUT
-      Given tile=(58, 9), and level=arena,
-      "double studio:double studio:bedroom 2"
-    """
-    x = tile[0]
-    y = tile[1]
-    tile = self.tiles[y][x]
-
-    path = f"{tile['world']}"
-    if level == "world": 
-      return path
-    else: 
-      path += f":{tile['sector']}"
+      for x in range(self.width):
+        tile = {
+          "x": x,
+          "y": y,
+          "type": "traversable" if self.layout[y][x] == 0 else "wall",
+          "events": set(),  # Set to store current events
+          "description": "",  # Optional tile description
+          "objects": set(),  # Set to store objects on this tile
+        }
+        row.append(tile)
+      tiles.append(row)
+    return tiles
     
-    if level == "sector": 
-      return path
-    else: 
-      path += f":{tile['arena']}"
-
-    if level == "arena": 
-      return path
-    else: 
-      path += f":{tile['game_object']}"
-
-    return path
-
-
-  def get_nearby_tiles(self, tile, vision_r): 
+  def is_traversable(self, tile):
     """
-    Given the current tile and vision_r, return a list of tiles that are 
-    within the radius. Note that this implementation looks at a square 
-    boundary when determining what is within the radius. 
-    i.e., for vision_r, returns x's. 
-    x x x x x 
-    x x x x x
-    x x P x x 
-    x x x x x
-    x x x x x
-
-    INPUT: 
-      tile: The tile coordinate of our interest in (x, y) form.
-      vision_r: The radius of the persona's vision. 
-    OUTPUT: 
-      nearby_tiles: a list of tiles that are within the radius. 
+    Check if a tile is traversable (not a wall)
+    
+    Args:
+        tile: Tile coordinates (x, y)
+        
+    Returns:
+        bool: True if the tile is traversable
     """
-    left_end = 0
-    if tile[0] - vision_r > left_end: 
-      left_end = tile[0] - vision_r
-
-    right_end = self.maze_width - 1
-    if tile[0] + vision_r + 1 < right_end: 
-      right_end = tile[0] + vision_r + 1
-
-    bottom_end = self.maze_height - 1
-    if tile[1] + vision_r + 1 < bottom_end: 
-      bottom_end = tile[1] + vision_r + 1
-
-    top_end = 0
-    if tile[1] - vision_r > top_end: 
-      top_end = tile[1] - vision_r 
-
-    nearby_tiles = []
-    for i in range(left_end, right_end): 
-      for j in range(top_end, bottom_end): 
-        nearby_tiles += [(i, j)]
-    return nearby_tiles
-
-
-  def add_event_from_tile(self, curr_event, tile): 
+    x, y = tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+      return False
+    return self.tiles[y][x]["type"] == "traversable"
+    
+  def get_events_at(self, tile):
     """
-    Add an event triple to a tile.  
-
-    INPUT: 
-      curr_event: Current event triple. 
-        e.g., ('double studio:double studio:bedroom 2:bed', None,
-                None)
-      tile: The tile coordinate of our interest in (x, y) form.
-    OUPUT: 
-      None
+    Get all events at a specific tile
+    
+    Args:
+        tile: Tile coordinates (x, y)
+        
+    Returns:
+        list: List of events at the tile
     """
-    self.tiles[tile[1]][tile[0]]["events"].add(curr_event)
-
-
-  def remove_event_from_tile(self, curr_event, tile):
+    x, y = tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+      return []
+    return list(self.tiles[y][x]["events"])
+    
+  def add_event(self, tile, event):
     """
-    Remove an event triple from a tile.  
-
-    INPUT: 
-      curr_event: Current event triple. 
-        e.g., ('double studio:double studio:bedroom 2:bed', None,
-                None)
-      tile: The tile coordinate of our interest in (x, y) form.
-    OUPUT: 
-      None
+    Add an event to a specific tile
+    
+    Args:
+        tile: Tile coordinates (x, y)
+        event: Event to add
     """
-    curr_tile_ev_cp = self.tiles[tile[1]][tile[0]]["events"].copy()
-    for event in curr_tile_ev_cp: 
-      if event == curr_event:  
-        self.tiles[tile[1]][tile[0]]["events"].remove(event)
-
-
-  def turn_event_from_tile_idle(self, curr_event, tile):
-    curr_tile_ev_cp = self.tiles[tile[1]][tile[0]]["events"].copy()
-    for event in curr_tile_ev_cp: 
-      if event == curr_event:  
-        self.tiles[tile[1]][tile[0]]["events"].remove(event)
-        new_event = (event[0], None, None, None)
-        self.tiles[tile[1]][tile[0]]["events"].add(new_event)
-
-
+    x, y = tile
+    if 0 <= x < self.width and 0 <= y < self.height:
+      self.tiles[y][x]["events"].add(event)
+    
+  def remove_event(self, tile, event):
+    """
+    Remove an event from a specific tile
+    
+    Args:
+        tile: Tile coordinates (x, y)
+        event: Event to remove
+    """
+    x, y = tile
+    if 0 <= x < self.width and 0 <= y < self.height:
+      self.tiles[y][x]["events"].discard(event)
+    
+  def get_distance(self, start, end):
+    """
+    Calculate Manhattan distance between two tiles
+    
+    Args:
+        start: Starting tile coordinates (x, y)
+        end: Ending tile coordinates (x, y)
+        
+    Returns:
+        int: Manhattan distance between tiles
+    """
+    return abs(end[0] - start[0]) + abs(end[1] - start[1])
+    
   def remove_subject_events_from_tile(self, subject, tile):
     """
-    Remove an event triple that has the input subject from a tile. 
-
-    INPUT: 
-      subject: "Isabella Rodriguez"
-      tile: The tile coordinate of our interest in (x, y) form.
-    OUPUT: 
-      None
+    Remove all events with a specific subject from a tile
+    
+    Args:
+        subject: The subject to match in events
+        tile: Tile coordinates (x, y)
     """
-    curr_tile_ev_cp = self.tiles[tile[1]][tile[0]]["events"].copy()
-    for event in curr_tile_ev_cp: 
-      if event[0] == subject:  
-        self.tiles[tile[1]][tile[0]]["events"].remove(event)
+    x, y = tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+        print(f"Warning: Tile coordinates out of bounds: ({x}, {y})")
+        return
+        
+    # Get the events set for this tile
+    events = self.tiles[y][x]["events"]
+    
+    # Create a list of events to remove
+    to_remove = set()
+    for event in events:
+        # Check if event is a tuple and has at least one element
+        if isinstance(event, tuple) and len(event) > 0:
+            # If the first element (subject) matches, mark for removal
+            if event[0] == subject:
+                to_remove.add(event)
+                
+    # Remove the marked events
+    for event in to_remove:
+        events.discard(event)
+        
+    # Update the tile's events
+    self.tiles[y][x]["events"] = events
+    
+  def add_event_from_tile(self, event, tile):
+    """
+    Add an event to a specific tile
+    
+    Args:
+        event: The event to add (typically a tuple of subject, predicate, object, description)
+        tile: Tile coordinates (x, y)
+    """
+    x, y = tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+        print(f"Warning: Tile coordinates out of bounds: ({x}, {y})")
+        # If coordinates are out of bounds, expand the maze
+        new_width = max(self.width, x + 1)
+        new_height = max(self.height, y + 1)
+        self._expand_maze(new_width, new_height)
+        
+    # Now add the event to the tile
+    self.tiles[y][x]["events"].add(event)
+    
+  def _expand_maze(self, new_width, new_height):
+    """
+    Expand the maze to accommodate new dimensions
+    
+    Args:
+        new_width: New width of the maze
+        new_height: New height of the maze
+    """
+    # Expand layout
+    old_layout = self.layout
+    self.layout = [[0 for _ in range(new_width)] for _ in range(new_height)]
+    for y in range(min(self.height, new_height)):
+        for x in range(min(self.width, new_width)):
+            self.layout[y][x] = old_layout[y][x]
+            
+    # Expand tiles structure
+    old_tiles = self.tiles
+    self.tiles = []
+    for y in range(new_height):
+        row = []
+        for x in range(new_width):
+            if y < self.height and x < self.width:
+                # Copy existing tile
+                row.append(old_tiles[y][x])
+            else:
+                # Create new tile
+                tile = {
+                    "x": x,
+                    "y": y,
+                    "type": "traversable",
+                    "events": set(),
+                    "description": "",
+                    "objects": set(),
+                }
+                row.append(tile)
+        self.tiles.append(row)
+        
+    # Update dimensions
+    self.width = new_width
+    self.height = new_height
+    print(f"Maze expanded to {self.width}x{self.height}")
+    
+  def remove_event_from_tile(self, event, tile):
+    """
+    Remove a specific event from a tile
+    
+    Args:
+        event: The event to remove
+        tile: Tile coordinates (x, y)
+    """
+    x, y = tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+        print(f"Warning: Tile coordinates out of bounds: ({x}, {y})")
+        return
+        
+    # Get the events set for this tile
+    events = self.tiles[y][x]["events"]
+    
+    # Remove the event if it exists
+    if event in events:
+        events.discard(event)
+    else:
+        # If the event is a tuple, try to match its components
+        if isinstance(event, tuple):
+            matching_events = set()
+            for existing_event in events:
+                if isinstance(existing_event, tuple):
+                    # Match as many components as available in both tuples
+                    min_len = min(len(event), len(existing_event))
+                    if event[:min_len] == existing_event[:min_len]:
+                        matching_events.add(existing_event)
+            
+            # Remove all matching events
+            for matching_event in matching_events:
+                events.discard(matching_event)
+                
+    # Update the tile's events
+    self.tiles[y][x]["events"] = events
+    
+  def get_tiles_in_vision_range(self, center_tile, vision_radius):
+    """
+    Get all tiles within a given vision radius of a center tile
+    
+    Args:
+        center_tile: The central tile to check from (x, y)
+        vision_radius: How far the agent can see (in tiles)
+        
+    Returns:
+        list: List of tile coordinates within vision range
+    """
+    if not center_tile:
+        return []
+        
+    x, y = center_tile
+    if not (0 <= x < self.width and 0 <= y < self.height):
+        print(f"Warning: Center tile coordinates out of bounds: ({x}, {y})")
+        return []
+        
+    visible_tiles = []
+    
+    # Check all tiles in a square around the center
+    for dy in range(-vision_radius, vision_radius + 1):
+        for dx in range(-vision_radius, vision_radius + 1):
+            # Calculate target coordinates
+            target_x = x + dx
+            target_y = y + dy
+            
+            # Skip if out of bounds
+            if not (0 <= target_x < self.width and 0 <= target_y < self.height):
+                continue
+                
+            # Calculate Manhattan distance
+            distance = abs(dx) + abs(dy)
+            
+            # Add tile if within vision radius and has line of sight
+            if distance <= vision_radius and self.has_line_of_sight(center_tile, (target_x, target_y)):
+                visible_tiles.append((target_x, target_y))
+                
+    return visible_tiles
+    
+  def has_line_of_sight(self, start, end):
+    """
+    Check if there's a clear line of sight between two tiles using Bresenham's line algorithm
+    
+    Args:
+        start: Starting tile coordinates (x, y)
+        end: Ending tile coordinates (x, y)
+        
+    Returns:
+        bool: True if there's a clear line of sight
+    """
+    x0, y0 = start
+    x1, y1 = end
+    
+    # Use Bresenham's line algorithm to check tiles between start and end
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    x, y = x0, y0
+    n = 1 + dx + dy
+    x_inc = 1 if x1 > x0 else -1
+    y_inc = 1 if y1 > y0 else -1
+    error = dx - dy
+    dx *= 2
+    dy *= 2
+    
+    for _ in range(n):
+        # Check if current tile blocks vision
+        if not self.is_traversable((x, y)):
+            # Don't block vision on the target tile
+            if (x, y) != end:
+                return False
+            
+        if error > 0:
+            x += x_inc
+            error -= dy
+        else:
+            y += y_inc
+            error += dx
+            
+    return True
+    
+  # Add other methods like get_events_at, get_distance, etc.
 
 
 

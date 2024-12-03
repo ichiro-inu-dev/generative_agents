@@ -33,6 +33,7 @@ class Persona:
     # <name> is the full name of the persona. This is a unique identifier for
     # the persona within Reverie. 
     self.name = name
+    self.folder_name = folder_mem_saved or name
 
     # PERSONA MEMORY 
     # If there is already memory in folder_mem_saved, we load that. Otherwise,
@@ -46,6 +47,17 @@ class Persona:
     # <scratch> is the persona's scratch (short term memory) space. 
     scratch_saved = f"{folder_mem_saved}/bootstrap_memory/scratch.json"
     self.scratch = Scratch(scratch_saved)
+    self.scratch.name = self.name
+    self.scratch.full_name = self.name
+
+    # Parse the name into components
+    name_parts = self.name.split()
+    if len(name_parts) >= 2:
+        self.scratch.first_name = name_parts[0]
+        self.scratch.last_name = name_parts[-1]
+    else:
+        self.scratch.first_name = self.name
+        self.scratch.last_name = ""
 
 
   def save(self, save_folder): 
